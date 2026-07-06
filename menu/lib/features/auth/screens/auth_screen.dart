@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:nfc_manager/nfc_manager.dart';
-import 'services/api_service.dart';
-import 'menu_screen.dart';
+import '../../menu/services/api_service.dart';
+import '../../menu/screens/menu_screen.dart';
+
 
 final apiServiceProvider = Provider((ref) => ApiService());
 

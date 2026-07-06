@@ -4,7 +4,12 @@ class MenuItem {
   final double price;
   final String categoryId;
 
-  MenuItem({required this.id, required this.name, required this.price, required this.categoryId});
+  MenuItem({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.categoryId,
+  });
 }
 
 class CartItem {
