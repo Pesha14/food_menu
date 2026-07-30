@@ -1,29 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:zcs_sdk_plugin/zcs_sdk_plugin.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../transactions/models/payment_method.dart';
+import '../../transactions/providers/transaction_provider.dart';
+import '../../transactions/screens/receipt_screen.dart';
 import '../models/menu_models.dart';
-import '../providers/cart_provider.dart';
+import '../providers/menu_provider.dart';
 
 class MenuScreen extends ConsumerWidget {
-  final String staffName;
-  MenuScreen({super.key, required this.staffName});
-
-  final List<MenuItem> items = [
-    MenuItem(id: '1', name: 'Roasted Chicken', price: 1500.0, categoryId: '1'),
-    MenuItem(id: '2', name: 'Beef Stew', price: 1200.0, categoryId: '1'),
-    MenuItem(id: '3', name: 'Coffee', price: 200.0, categoryId: '2'),
-  ];
+  const MenuScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(cartProvider.notifier);
+    final session = ref.watch(authProvider);
+    final menusAsync = ref.watch(availableMenusProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBF7),
       appBar: AppBar(
         title: Text(
-          'Welcome, $staffName',
+          'Welcome, ${session?.staff.fullName ?? ''}',
           style: GoogleFonts.playfairDisplay(color: Colors.white),
         ),
         backgroundColor: const Color(0xFF000080),
@@ -36,11 +33,11 @@ class MenuScreen extends ConsumerWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Balance:', style: GoogleFonts.lato(fontSize: 16)),
+                Text('Company:', style: GoogleFonts.lato(fontSize: 16)),
                 Text(
-                  'KSH ${notifier.balance.toStringAsFixed(2)}',
+                  session?.staff.company.name ?? '',
                   style: GoogleFonts.lato(
-                    fontSize: 20,
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
                     color: const Color(0xFF000080),
                   ),
@@ -49,176 +46,128 @@ class MenuScreen extends ConsumerWidget {
             ),
           ),
           Expanded(
-            child: DataTable(
-              columnSpacing: 10,
-              columns: const [
-                DataColumn(
-                  label: Text(
-                    'Item',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
+            child: menusAsync.when(
+              data: (menus) {
+                if (menus.isEmpty) {
+                  return const Center(
+                    child: Text('No menus available right now.'),
+                  );
+                }
+                return ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: menus.length,
+                  separatorBuilder: (_, _) => const Divider(),
+                  itemBuilder: (context, index) {
+                    final item = menus[index];
+                    return ListTile(
+                      title: Text(
+                        item.menuName,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(item.category.name),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('KSH ${item.pricing.price}'),
+                          if (item.pricing.discountable)
+                            const Text(
+                              'Discount Available',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontSize: 12,
+                              ),
+                            )
+                          else
+                            const Text(
+                              'No Discount',
+                              style: TextStyle(
+                                color: Colors.black45,
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
+                      ),
+                      onTap: () => _confirmAndBuy(context, ref, item),
+                    );
+                  },
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (err, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('Failed to load menus: $err'),
                 ),
-                DataColumn(
-                  label: Text(
-                    'Price',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                DataColumn(label: Text('Action')),
-              ],
-              rows: items
-                  .map(
-                    (item) => DataRow(
-                      cells: [
-                        DataCell(Text(item.name)),
-                        DataCell(Text('KSH ${item.price.toStringAsFixed(2)}')),
-                        DataCell(
-                          ElevatedButton(
-                            onPressed: () {
-                              notifier.addItem(item);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('${item.name} added to cart'),
-                                  duration: const Duration(seconds: 1),
-                                ),
-                              );
-                            },
-                            child: const Text('Add'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                  .toList(),
+              ),
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color(0xFFC0A060),
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => CartScreen(staffName: staffName)),
-        ),
-        label: const Text('View Cart'),
-        icon: const Icon(Icons.shopping_cart),
-      ),
     );
   }
-}
 
-class CartScreen extends ConsumerWidget {
-  final String staffName;
-  const CartScreen({super.key, required this.staffName});
-
-  Future<void> _printReceipt(List<CartItem> cart) async {
-    final ZcsSdkPlugin printer = ZcsSdkPlugin();
-
-    final double total = cart.fold(
-      0.0,
-      (sum, c) => sum + (c.item.price * c.quantity),
+  /// Steps 3 & 4 -- staff taps a meal, confirms, and the transaction is
+  /// created immediately. One meal per transaction; the backend computes
+  /// discount and amount payable.
+  Future<void> _confirmAndBuy(
+    BuildContext context,
+    WidgetRef ref,
+    MenuItem item,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirm Purchase'),
+        content: Text('Buy "${item.menuName}" for KSH ${item.pricing.price}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
     );
-    final double companyCover = 3000.0;
-    final double discount = total > companyCover ? companyCover : total;
-    final double toBePaid = total - discount;
+
+    if (confirmed != true || !context.mounted) return;
+
+    ref.read(selectedMenuItemProvider.notifier).state = item;
+    final session = ref.read(authProvider);
+    if (session == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
 
     try {
-      await printer.initializeDevice();
-      await printer.openDevice();
+      final transactionService = ref.read(transactionServiceProvider);
+      final transaction = await transactionService.createTransaction(
+        token: session.token,
+        menuId: item.menuId,
+        paymentMethod: PaymentMethod.cash,
+      );
 
-      final Map<String, dynamic> receiptData = {
-        "businessName": "MENU SYSTEM",
-        "header":
-            "STAFF: $staffName\nDATE: ${DateTime.now().toString().substring(0, 16)}",
-        "items": cart
-            .map(
-              (c) => {
-                "name": "${c.item.name} (Qty: ${c.quantity})",
-                "price":
-                    "KSH ${(c.item.price * c.quantity).toStringAsFixed(2)}",
-              },
-            )
-            .toList(),
-        "totals": {
-          "total": "Total: KSH ${total.toStringAsFixed(2)}",
-          "discount": "Company Discount: KSH ${discount.toStringAsFixed(2)}",
-          "toPay": "To Be Paid: KSH ${toBePaid.toStringAsFixed(2)}",
-        },
-        "footer": "Thank you for your service!",
-        "layoutStyle": "detailed",
-      };
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loading dialog
 
-      await printer.printDynamic(receiptData, bothCopies: false);
-      await printer.closeDevice();
-    } catch (e) {
-      debugPrint("Printing error: $e");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final cart = ref.watch(cartProvider);
-    final notifier = ref.read(cartProvider.notifier);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFFDFBF7),
-      appBar: AppBar(
-        title: const Text('Cart'),
-        backgroundColor: const Color(0xFF000080),
-      ),
-      body: ListView.separated(
-        padding: const EdgeInsets.all(10),
-        itemCount: cart.length,
-        separatorBuilder: (context, index) => const Divider(),
-        itemBuilder: (context, index) {
-          final cartItem = cart[index];
-          return ListTile(
-            title: Text(
-              cartItem.item.name,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text('Quantity: ${cartItem.quantity}'),
-            trailing: Text(
-              'KSH ${(cartItem.item.price * cartItem.quantity).toStringAsFixed(2)}',
-            ),
-          );
-        },
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        color: Colors.white,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Grand Total: KSH ${notifier.total.toStringAsFixed(2)}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Edit Choices'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF000080),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () => _printReceipt(cart),
-                    child: const Text('Print Receipt'),
-                  ),
-                ),
-              ],
-            ),
-          ],
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ReceiptScreen(transaction: transaction),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Transaction failed: $e')),
+      );
+    }
   }
 }
