@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../auth/screens/auth_screen.dart';
+import '../../theme/app_tokens.dart';
 import '../../transactions/models/payment_method.dart';
 import '../../transactions/providers/transaction_provider.dart';
 import '../../transactions/screens/receipt_screen.dart';
@@ -11,93 +14,149 @@ import '../providers/menu_provider.dart';
 class MenuScreen extends ConsumerWidget {
   const MenuScreen({super.key});
 
+  void _logout(BuildContext context, WidgetRef ref) {
+    // Step 6: clear JWT, staff info, and the selected menu, then return
+    // to the login screen.
+    ref.read(selectedMenuItemProvider.notifier).state = null;
+    ref.read(authProvider.notifier).logout();
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(authProvider);
     final menusAsync = ref.watch(availableMenusProvider);
+    final staffName = session?.staff.fullName ?? '';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFDFBF7),
-      appBar: AppBar(
-        title: Text(
-          'Welcome, ${session?.staff.fullName ?? ''}',
-          style: GoogleFonts.playfairDisplay(color: Colors.white),
-        ),
-        backgroundColor: const Color(0xFF000080),
-      ),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            color: Colors.white,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      backgroundColor: AppTokens.bg,
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 150,
+            floating: false,
+            pinned: true,
+            backgroundColor: AppTokens.surface,
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [AppTokens.surface, AppTokens.bg],
+                  ),
+                ),
+              ),
+            ),
+            title: Row(
               children: [
-                Text('Company:', style: GoogleFonts.lato(fontSize: 16)),
-                Text(
-                  session?.staff.company.name ?? '',
-                  style: GoogleFonts.lato(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF000080),
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: AppTokens.gold,
+                  child: Text(
+                    staffName.isNotEmpty ? staffName[0].toUpperCase() : '?',
+                    style: GoogleFonts.inter(
+                      color: AppTokens.bg,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Welcome, $staffName',
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.playfairDisplay(
+                      color: AppTokens.ivory,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(
+                  Icons.logout_rounded,
+                  color: AppTokens.mutedText,
+                ),
+                onPressed: () => _logout(context, ref),
+              ),
+            ],
           ),
-          Expanded(
-            child: menusAsync.when(
-              data: (menus) {
-                if (menus.isEmpty) {
-                  return const Center(
-                    child: Text('No menus available right now.'),
-                  );
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: menus.length,
-                  separatorBuilder: (_, _) => const Divider(),
-                  itemBuilder: (context, index) {
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: _CompanyCard(companyName: session?.staff.company.name ?? ''),
+            ),
+          ),
+          menusAsync.when(
+            data: (menus) {
+              if (menus.isEmpty) {
+                return const SliverFillRemaining(
+                  child: Center(
+                    child: Text(
+                      'No menus available right now.',
+                      style: TextStyle(color: AppTokens.mutedText),
+                    ),
+                  ),
+                );
+              }
+              return SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate((context, index) {
                     final item = menus[index];
-                    return ListTile(
-                      title: Text(
-                        item.menuName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      subtitle: Text(item.category.name),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text('KSH ${item.pricing.price}'),
-                          if (item.pricing.discountable)
-                            const Text(
-                              'Discount Available',
-                              style: TextStyle(
-                                color: Colors.green,
+                    final showHeader = index == 0 ||
+                        item.category.id != menus[index - 1].category.id;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (showHeader) ...[
+                          const SizedBox(height: 16),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4, bottom: 12),
+                            child: Text(
+                              item.category.name.toUpperCase(),
+                              style: GoogleFonts.inter(
                                 fontSize: 12,
-                              ),
-                            )
-                          else
-                            const Text(
-                              'No Discount',
-                              style: TextStyle(
-                                color: Colors.black45,
-                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: AppTokens.gold,
+                                letterSpacing: 3,
                               ),
                             ),
+                          ),
                         ],
-                      ),
-                      onTap: () => _confirmAndBuy(context, ref, item),
+                        _MenuItemCard(
+                          item: item,
+                          onOrder: () => _confirmAndBuy(context, ref, item),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                     );
-                  },
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => Center(
+                  }, childCount: menus.length),
+                ),
+              );
+            },
+            loading: () => const SliverFillRemaining(
+              child: Center(
+                child: CircularProgressIndicator(color: AppTokens.gold),
+              ),
+            ),
+            error: (err, __) => SliverFillRemaining(
+              child: Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text('Failed to load menus: $err'),
+                  child: Text(
+                    'Failed to load menus: $err',
+                    style: const TextStyle(color: AppTokens.mutedText),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ),
             ),
@@ -115,15 +174,21 @@ class MenuScreen extends ConsumerWidget {
     WidgetRef ref,
     MenuItem item,
   ) async {
+    HapticFeedback.lightImpact();
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Confirm Purchase'),
-        content: Text('Buy "${item.menuName}" for KSH ${item.pricing.price}?'),
+        backgroundColor: AppTokens.surface,
+        title: Text('Confirm Purchase', style: GoogleFonts.playfairDisplay(color: AppTokens.ivory)),
+        content: Text(
+          'Buy "${item.menuName}" for KSH ${item.pricing.price}?',
+          style: GoogleFonts.inter(color: AppTokens.mutedText),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: GoogleFonts.inter(color: AppTokens.mutedText)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -142,7 +207,9 @@ class MenuScreen extends ConsumerWidget {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppTokens.gold),
+      ),
     );
 
     try {
@@ -166,8 +233,104 @@ class MenuScreen extends ConsumerWidget {
       if (!context.mounted) return;
       Navigator.pop(context); // close loading dialog
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Transaction failed: $e')),
+        SnackBar(
+          content: Text('Transaction failed: $e'),
+          backgroundColor: AppTokens.danger,
+        ),
       );
     }
+  }
+}
+
+class _CompanyCard extends StatelessWidget {
+  final String companyName;
+
+  const _CompanyCard({required this.companyName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTokens.cardDecoration,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Company',
+            style: GoogleFonts.inter(fontSize: 13, color: AppTokens.mutedText),
+          ),
+          Text(
+            companyName,
+            style: GoogleFonts.inter(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppTokens.gold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuItemCard extends StatelessWidget {
+  final MenuItem item;
+  final VoidCallback onOrder;
+
+  const _MenuItemCard({required this.item, required this.onOrder});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTokens.cardDecoration,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.menuName,
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppTokens.ivory,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'KSH ${item.pricing.price}',
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppTokens.gold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  item.pricing.discountable ? 'Discount Available' : 'No Discount',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: item.pricing.discountable
+                        ? AppTokens.success
+                        : AppTokens.mutedText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: onOrder,
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: const Text('Order'),
+          ),
+        ],
+      ),
+    );
   }
 }

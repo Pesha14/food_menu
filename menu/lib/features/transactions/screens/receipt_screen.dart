@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:zcs_sdk_plugin/zcs_sdk_plugin.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../auth/screens/auth_screen.dart';
+import '../../menu/providers/menu_provider.dart';
+import '../../theme/app_tokens.dart';
 import '../models/transaction.dart';
 
 class ReceiptScreen extends ConsumerStatefulWidget {
@@ -22,9 +24,10 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
   String _formatDate(DateTime dt) =>
       DateFormat("d MMM yyyy hh:mm a").format(dt.toLocal());
 
-  /// Step 6 -- Logout: clear JWT, staff info, and selected menu, then
+  /// Step 6 -- Logout: clear the JWT, staff info, and selected menu, then
   /// return to the login screen. No logout API call is required.
   void _logout() {
+    ref.read(selectedMenuItemProvider.notifier).state = null;
     ref.read(authProvider.notifier).logout();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -72,7 +75,10 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Printing error: $e')),
+          SnackBar(
+            content: Text('Printing error: $e'),
+            backgroundColor: AppTokens.danger,
+          ),
         );
       }
     } finally {
@@ -87,10 +93,9 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: const Color(0xFFFDFBF7),
+        backgroundColor: AppTokens.bg,
         appBar: AppBar(
-          title: Text('Receipt', style: GoogleFonts.playfairDisplay()),
-          backgroundColor: const Color(0xFF000080),
+          title: const Text('Receipt'),
           automaticallyImplyLeading: false,
         ),
         body: Center(
@@ -98,34 +103,103 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
             padding: const EdgeInsets.all(24),
             child: Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: Colors.black26),
-              ),
               width: 340,
+              decoration: BoxDecoration(
+                color: AppTokens.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTokens.cardBorder, width: 0.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    t.companyName,
+                    '══════════════════════════',
+                    style: TextStyle(
+                      color: AppTokens.gold.withValues(alpha: 0.5),
+                      fontSize: 12,
+                      letterSpacing: 2,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    t.companyName.toUpperCase(),
                     textAlign: TextAlign.center,
                     style: GoogleFonts.playfairDisplay(
-                      fontSize: 20,
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
+                      color: AppTokens.gold,
+                      letterSpacing: 1.5,
                     ),
                   ),
-                  const Divider(height: 30),
+                  const SizedBox(height: 4),
+                  Text(
+                    '══════════════════════════',
+                    style: TextStyle(
+                      color: AppTokens.gold.withValues(alpha: 0.5),
+                      fontSize: 12,
+                      letterSpacing: 2,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
                   _ReceiptRow('Receipt No', t.receiptNo),
                   _ReceiptRow('Date', _formatDate(t.transTime)),
                   _ReceiptRow('Staff', t.staffName),
+                  const Divider(height: 24, color: AppTokens.gold, thickness: 0.5),
                   _ReceiptRow('Meal', t.menuName),
-                  _ReceiptRow('Meal Price', 'KES ${t.mealCost}'),
-                  _ReceiptRow('Discount', 'KES ${t.discountAmount}'),
-                  _ReceiptRow('Amount Paid', 'KES ${t.paidAmount}'),
+                  _ReceiptRow('Meal Price', 'KSH ${t.mealCost}'),
+                  _ReceiptRow('Discount', 'KSH ${t.discountAmount}', valueColor: AppTokens.success),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.only(top: 10),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        top: BorderSide(
+                          color: AppTokens.gold.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'AMOUNT PAID',
+                          style: GoogleFonts.playfairDisplay(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTokens.gold,
+                          ),
+                        ),
+                        Text(
+                          'KSH ${t.paidAmount}',
+                          style: GoogleFonts.playfairDisplay(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTokens.gold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   _ReceiptRow('Payment Method', t.paymentMethodName),
-                  const Divider(height: 30),
+                  const SizedBox(height: 16),
                   Text(
                     'Thank You',
-                    style: GoogleFonts.lato(fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.playfairDisplay(
+                      fontStyle: FontStyle.italic,
+                      color: AppTokens.mutedText,
+                    ),
                   ),
                 ],
               ),
@@ -133,36 +207,48 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
           ),
         ),
         bottomNavigationBar: Container(
-          padding: const EdgeInsets.all(20),
-          color: Colors.white,
-          child: Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _printing ? null : _printReceipt,
-                  icon: _printing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.print),
-                  label: const Text('Print Receipt'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF000080),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 50),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          decoration: BoxDecoration(
+            color: AppTokens.surface,
+            border: Border(top: BorderSide(color: AppTokens.cardBorder, width: 0.5)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: _printing ? null : _printReceipt,
+                      icon: _printing
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTokens.bg,
+                              ),
+                            )
+                          : const Icon(Icons.receipt_long_rounded),
+                      label: const Text('Print Receipt'),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _logout,
-                  child: const Text('Done'),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton(
+                    onPressed: _logout,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTokens.ivory,
+                      side: const BorderSide(color: AppTokens.cardBorder),
+                    ),
+                    child: const Text('Done'),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -173,8 +259,9 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
 class _ReceiptRow extends StatelessWidget {
   final String label;
   final String value;
+  final Color? valueColor;
 
-  const _ReceiptRow(this.label, this.value);
+  const _ReceiptRow(this.label, this.value, {this.valueColor});
 
   @override
   Widget build(BuildContext context) {
@@ -183,10 +270,14 @@ class _ReceiptRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: GoogleFonts.lato(color: Colors.black54)),
+          Text(label, style: GoogleFonts.inter(fontSize: 13, color: AppTokens.mutedText)),
           Text(
             value,
-            style: GoogleFonts.lato(fontWeight: FontWeight.w600),
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: valueColor ?? AppTokens.ivory,
+            ),
           ),
         ],
       ),
