@@ -16,8 +16,3 @@ final availableMenusProvider = FutureProvider<List<MenuItem>>((ref) async {
   final service = ref.read(menuServiceProvider);
   return service.getAvailableMenus(token: session.token);
 });
-
-/// The single meal the staff member has tapped (Step 3 of the flow).
-/// Only one item is held at a time -- the guide's flow is one meal per
-/// transaction, not a multi-item cart.
-final selectedMenuItemProvider = StateProvider<MenuItem?>((ref) => null);

@@ -5,19 +5,16 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../auth/screens/auth_screen.dart';
 import '../../theme/app_tokens.dart';
-import '../../transactions/models/payment_method.dart';
-import '../../transactions/providers/transaction_provider.dart';
-import '../../transactions/screens/receipt_screen.dart';
 import '../models/menu_models.dart';
+import '../providers/cart_provider.dart';
 import '../providers/menu_provider.dart';
+import 'cart_screen.dart';
 
 class MenuScreen extends ConsumerWidget {
   const MenuScreen({super.key});
 
   void _logout(BuildContext context, WidgetRef ref) {
-    // Step 6: clear JWT, staff info, and the selected menu, then return
-    // to the login screen.
-    ref.read(selectedMenuItemProvider.notifier).state = null;
+    ref.read(cartProvider.notifier).clear();
     ref.read(authProvider.notifier).logout();
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthScreen()),
@@ -29,6 +26,8 @@ class MenuScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(authProvider);
     final menusAsync = ref.watch(availableMenusProvider);
+    final cartNotifier = ref.read(cartProvider.notifier);
+    final cart = ref.watch(cartProvider);
     final staffName = session?.staff.fullName ?? '';
 
     return Scaffold(
@@ -108,12 +107,16 @@ class MenuScreen extends ConsumerWidget {
                 );
               }
               return SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final item = menus[index];
                     final showHeader = index == 0 ||
                         item.category.id != menus[index - 1].category.id;
+                    final cartIndex =
+                        cart.indexWhere((c) => c.item.menuId == item.menuId);
+                    final qtyInCart =
+                        cartIndex >= 0 ? cart[cartIndex].quantity : 0;
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -134,7 +137,17 @@ class MenuScreen extends ConsumerWidget {
                         ],
                         _MenuItemCard(
                           item: item,
-                          onOrder: () => _confirmAndBuy(context, ref, item),
+                          qtyInCart: qtyInCart,
+                          onAdd: () {
+                            HapticFeedback.lightImpact();
+                            cartNotifier.addItem(item);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('${item.menuName} added'),
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                          },
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -163,82 +176,60 @@ class MenuScreen extends ConsumerWidget {
           ),
         ],
       ),
+      bottomNavigationBar: cart.isEmpty
+          ? null
+          : Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+              decoration: BoxDecoration(
+                color: AppTokens.surface,
+                border: Border(
+                  top: BorderSide(color: AppTokens.cardBorder, width: 0.5),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Cart Subtotal',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: AppTokens.mutedText,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'KSH ${cartNotifier.subtotal.toStringAsFixed(2)}',
+                            style: GoogleFonts.playfairDisplay(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: AppTokens.gold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const CartScreen()),
+                        ),
+                        icon: const Icon(Icons.shopping_cart_rounded),
+                        label: Text('View Cart (${cart.length})'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
     );
-  }
-
-  /// Steps 3 & 4 -- staff taps a meal, confirms, and the transaction is
-  /// created immediately. One meal per transaction; the backend computes
-  /// discount and amount payable.
-  Future<void> _confirmAndBuy(
-    BuildContext context,
-    WidgetRef ref,
-    MenuItem item,
-  ) async {
-    HapticFeedback.lightImpact();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTokens.surface,
-        title: Text('Confirm Purchase', style: GoogleFonts.playfairDisplay(color: AppTokens.ivory)),
-        content: Text(
-          'Buy "${item.menuName}" for KSH ${item.pricing.price}?',
-          style: GoogleFonts.inter(color: AppTokens.mutedText),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: GoogleFonts.inter(color: AppTokens.mutedText)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirm'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !context.mounted) return;
-
-    ref.read(selectedMenuItemProvider.notifier).state = item;
-    final session = ref.read(authProvider);
-    if (session == null) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(color: AppTokens.gold),
-      ),
-    );
-
-    try {
-      final transactionService = ref.read(transactionServiceProvider);
-      final transaction = await transactionService.createTransaction(
-        token: session.token,
-        menuId: item.menuId,
-        paymentMethod: PaymentMethod.cash,
-      );
-
-      if (!context.mounted) return;
-      Navigator.pop(context); // close loading dialog
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ReceiptScreen(transaction: transaction),
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context); // close loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Transaction failed: $e'),
-          backgroundColor: AppTokens.danger,
-        ),
-      );
-    }
   }
 }
 
@@ -275,9 +266,14 @@ class _CompanyCard extends StatelessWidget {
 
 class _MenuItemCard extends StatelessWidget {
   final MenuItem item;
-  final VoidCallback onOrder;
+  final int qtyInCart;
+  final VoidCallback onAdd;
 
-  const _MenuItemCard({required this.item, required this.onOrder});
+  const _MenuItemCard({
+    required this.item,
+    required this.qtyInCart,
+    required this.onAdd,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -322,12 +318,28 @@ class _MenuItemCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: onOrder,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          if (qtyInCart > 0)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTokens.gold.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                'x$qtyInCart',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.bold,
+                  color: AppTokens.gold,
+                ),
+              ),
             ),
-            child: const Text('Order'),
+          ElevatedButton(
+            onPressed: onAdd,
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            ),
+            child: const Text('Add'),
           ),
         ],
       ),

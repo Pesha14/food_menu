@@ -5,14 +5,14 @@ import 'package:intl/intl.dart';
 import 'package:zcs_sdk_plugin/zcs_sdk_plugin.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../auth/screens/auth_screen.dart';
-import '../../menu/providers/menu_provider.dart';
+import '../../menu/providers/cart_provider.dart';
 import '../../theme/app_tokens.dart';
-import '../models/transaction.dart';
+import '../models/cart_receipt.dart';
 
 class ReceiptScreen extends ConsumerStatefulWidget {
-  final Transaction transaction;
+  final CartReceipt receipt;
 
-  const ReceiptScreen({super.key, required this.transaction});
+  const ReceiptScreen({super.key, required this.receipt});
 
   @override
   ConsumerState<ReceiptScreen> createState() => _ReceiptScreenState();
@@ -24,10 +24,10 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
   String _formatDate(DateTime dt) =>
       DateFormat("d MMM yyyy hh:mm a").format(dt.toLocal());
 
-  /// Step 6 -- Logout: clear the JWT, staff info, and selected menu, then
-  /// return to the login screen. No logout API call is required.
+  /// Step 6 -- Logout: clear the JWT, staff info, and cart, then return
+  /// to the login screen. No logout API call is required.
   void _logout() {
-    ref.read(selectedMenuItemProvider.notifier).state = null;
+    ref.read(cartProvider.notifier).clear();
     ref.read(authProvider.notifier).logout();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -39,7 +39,8 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
 
   Future<void> _printReceipt() async {
     setState(() => _printing = true);
-    final t = widget.transaction;
+    final r = widget.receipt;
+    final first = r.first;
     final printer = ZcsSdkPlugin();
 
     try {
@@ -47,19 +48,20 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
       await printer.openDevice();
 
       final receiptData = {
-        "businessName": t.companyName,
+        "businessName": first.companyName,
         "header":
-            "Receipt No\n${t.receiptNo}\n\nDate\n${_formatDate(t.transTime)}\n\nStaff\n${t.staffName}",
-        "items": [
-          {
-            "name": "Meal\n${t.menuName}",
-            "price": "Meal Price\nKES ${t.mealCost}",
-          },
-        ],
+            "Receipt No(s)\n${r.combinedReceiptNo}\n\nDate\n${_formatDate(first.transTime)}\n\nStaff\n${first.staffName}",
+        "items": r.transactions
+            .map((t) => {
+                  "name": t.menuName,
+                  "price": "KES ${t.mealCost}",
+                })
+            .toList(),
         "totals": {
-          "discount": "Discount: KES ${t.discountAmount}",
-          "toPay": "Amount Paid: KES ${t.paidAmount}",
-          "method": "Payment Method: ${t.paymentMethodName}",
+          "subtotal": "Subtotal: KES ${r.subtotal}",
+          "discount": "Discount: KES ${r.totalDiscount}",
+          "toPay": "Amount Paid: KES ${r.totalPaid}",
+          "method": "Payment Method: ${first.paymentMethodName}",
         },
         "footer": "Thank You",
         "layoutStyle": "detailed",
@@ -69,7 +71,7 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
       await printer.closeDevice();
 
       // Step 6: logout happens automatically immediately after the
-      // receipt is printed, per the guide.
+      // receipt is printed.
       _logout();
       return;
     } catch (e) {
@@ -88,7 +90,8 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final t = widget.transaction;
+    final r = widget.receipt;
+    final first = r.first;
 
     return PopScope(
       canPop: false,
@@ -130,7 +133,7 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    t.companyName.toUpperCase(),
+                    first.companyName.toUpperCase(),
                     textAlign: TextAlign.center,
                     style: GoogleFonts.playfairDisplay(
                       fontSize: 18,
@@ -150,22 +153,44 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  _ReceiptRow('Receipt No', t.receiptNo),
-                  _ReceiptRow('Date', _formatDate(t.transTime)),
-                  _ReceiptRow('Staff', t.staffName),
+                  _ReceiptRow('Date', _formatDate(first.transTime)),
+                  _ReceiptRow('Staff', first.staffName),
                   const Divider(height: 24, color: AppTokens.gold, thickness: 0.5),
-                  _ReceiptRow('Meal', t.menuName),
-                  _ReceiptRow('Meal Price', 'KSH ${t.mealCost}'),
-                  _ReceiptRow('Discount', 'KSH ${t.discountAmount}', valueColor: AppTokens.success),
+                  for (final t in r.transactions) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            t.menuName,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: AppTokens.ivory,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          'KSH ${t.mealCost}',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: AppTokens.gold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  const Divider(height: 20, color: AppTokens.gold, thickness: 0.5),
+                  _ReceiptRow('Subtotal', 'KSH ${r.subtotal}'),
+                  _ReceiptRow('Discount', 'KSH ${r.totalDiscount}', valueColor: AppTokens.success),
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.only(top: 10),
                     decoration: BoxDecoration(
                       border: Border(
-                        top: BorderSide(
-                          color: AppTokens.gold.withValues(alpha: 0.3),
-                          width: 1,
-                        ),
+                        top: BorderSide(color: AppTokens.gold.withValues(alpha: 0.3), width: 1),
                       ),
                     ),
                     child: Row(
@@ -180,7 +205,7 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
                           ),
                         ),
                         Text(
-                          'KSH ${t.paidAmount}',
+                          'KSH ${r.totalPaid}',
                           style: GoogleFonts.playfairDisplay(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -191,7 +216,7 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  _ReceiptRow('Payment Method', t.paymentMethodName),
+                  _ReceiptRow('Payment Method', first.paymentMethodName),
                   const SizedBox(height: 16),
                   Text(
                     'Thank You',
@@ -225,10 +250,7 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
                           ? SizedBox(
                               width: 16,
                               height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppTokens.bg,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppTokens.bg),
                             )
                           : const Icon(Icons.receipt_long_rounded),
                       label: const Text('Print Receipt'),

@@ -7,7 +7,7 @@
 class ApiConfig {
   ApiConfig._();
 
-  static const String baseUrl = 'http://192.168.100.196:5000/api/v1';
+  static const String baseUrl = 'http://10.0.2.2:5000/api/v1';
 
   static const Duration requestTimeout = Duration(seconds: 15);
 }
