@@ -23,7 +23,7 @@ class MenuPricing {
 
   factory MenuPricing.fromJson(Map<String, dynamic> json) => MenuPricing(
         price: json['menu_price'] as num,
-        discountable: json['discountable'] as bool? ?? false,
+        discountable: (json['discountable'] as num? ?? 0) != 0,
         discountAmount: json['discount_amt'] as num? ?? 0,
       );
 }

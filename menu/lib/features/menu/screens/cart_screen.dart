@@ -39,6 +39,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
         for (var i = 0; i < cartItem.quantity; i++) {
           final transaction = await transactionService.createTransaction(
             token: session.token,
+            staffId: session.staff.staffId,
             menuId: cartItem.item.menuId,
             paymentMethod: PaymentMethod.cash,
           );

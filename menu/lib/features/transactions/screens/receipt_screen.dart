@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -21,6 +23,8 @@ class ReceiptScreen extends ConsumerStatefulWidget {
 class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
   bool _printing = false;
 
+  static const _stepTimeout = Duration(seconds: 12);
+
   String _formatDate(DateTime dt) =>
       DateFormat("d MMM yyyy hh:mm a").format(dt.toLocal());
 
@@ -37,54 +41,149 @@ class _ReceiptScreenState extends ConsumerState<ReceiptScreen> {
     }
   }
 
+  /// Blocking dialog for print failures. A SnackBar can be missed (it
+  /// times out on its own, or gets covered/dismissed by other UI) --
+  /// this stays on screen until the staff member actively acknowledges
+  /// it, and always logs to the console too so failures show up even if
+  /// something UI-side keeps this dialog from rendering.
+  Future<void> _showPrintError(String message) async {
+    debugPrint('PRINT FAILURE: $message');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTokens.surface,
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: AppTokens.danger),
+            const SizedBox(width: 10),
+            Text(
+              'Printing Failed',
+              style: GoogleFonts.playfairDisplay(color: AppTokens.ivory),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: GoogleFonts.inter(color: AppTokens.mutedText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _printReceipt() async {
     setState(() => _printing = true);
     final r = widget.receipt;
     final first = r.first;
     final printer = ZcsSdkPlugin();
+    var step = 'initializing printer';
 
     try {
-      await printer.initializeDevice();
-      await printer.openDevice();
+      step = 'initializing printer';
+      final initOk = await printer.initializeDevice().timeout(_stepTimeout);
+      debugPrint('PRINT STEP [$step] result: $initOk');
+      if (initOk != true) {
+        throw Exception('Printer did not initialize (returned $initOk).');
+      }
 
-      final receiptData = {
-        "businessName": first.companyName,
-        "header":
-            "Receipt No(s)\n${r.combinedReceiptNo}\n\nDate\n${_formatDate(first.transTime)}\n\nStaff\n${first.staffName}",
-        "items": r.transactions
-            .map((t) => {
-                  "name": t.menuName,
-                  "price": "KES ${t.mealCost}",
-                })
-            .toList(),
-        "totals": {
-          "subtotal": "Subtotal: KES ${r.subtotal}",
-          "discount": "Discount: KES ${r.totalDiscount}",
-          "toPay": "Amount Paid: KES ${r.totalPaid}",
-          "method": "Payment Method: ${first.paymentMethodName}",
-        },
-        "footer": "Thank You",
-        "layoutStyle": "detailed",
-      };
+      step = 'opening printer connection';
+      final openResult = await printer.openDevice().timeout(_stepTimeout);
+      debugPrint('PRINT STEP [$step] result: $openResult');
+      _throwIfFailed(openResult, step);
 
-      await printer.printDynamic(receiptData, bothCopies: false);
-      await printer.closeDevice();
+     final receiptData = {
+  "businessName": first.companyName,
+
+  "header":
+      "Receipt No(s)\n${r.combinedReceiptNo}\n\n"
+      "Date\n${_formatDate(first.transTime)}\n\n"
+      "Staff\n${first.staffName}",
+
+  "fields": {
+    "Payment Method": first.paymentMethodName,
+  },
+
+  "items": r.transactions.map((t) => {
+        "Item": t.menuName,
+        "Qty": "1",
+        "Unit": "KES ${t.mealCost}",
+        "Total": "KES ${t.mealCost}",
+      }).toList(),
+
+  "totals": {
+    "Subtotal": "KES ${r.subtotal}",
+    "Discount": "KES ${r.totalDiscount}",
+    "Amount Paid": "KES ${r.totalPaid}",
+  },
+
+  "footer":
+    "--------------------------------\n"
+    "   Thank you for your service!\n"
+    "   Please visit us again soon\n"
+    "--------------------------------",
+  "layoutStyle": "detailed",
+};
+    
+
+      step = 'printing';
+      final printResult = await printer
+          .printDynamic( receiptData, bothCopies: false)
+          .timeout(_stepTimeout);
+      debugPrint('PRINT STEP [$step] result: $printResult');
+      _throwIfFailed(printResult, step);
+
+      step = 'closing printer connection';
+      final closeResult = await printer.closeDevice().timeout(_stepTimeout);
+      debugPrint('PRINT STEP [$step] result: $closeResult');
+      _throwIfFailed(closeResult, step);
 
       // Step 6: logout happens automatically immediately after the
       // receipt is printed.
       _logout();
       return;
+    } on TimeoutException {
+      await _showPrintError(
+        'The printer did not respond while $step (waited ${_stepTimeout.inSeconds}s). '
+        'Check that the printer is powered on and has paper, then try again.',
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Printing error: $e'),
-            backgroundColor: AppTokens.danger,
-          ),
-        );
-      }
+      await _showPrintError('Failed while $step:\n$e');
     } finally {
       if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  /// The plugin returns a Map<String, dynamic> from openDevice/printDynamic/
+  /// closeDevice rather than throwing on failure. We don't know its exact
+  /// schema yet, so check the common failure-signalling shapes defensively
+  /// (a false/0 "success" flag, a non-empty "error"/"message" field, or a
+  /// "status"/"code" that reads as an error) and surface whatever is there.
+  void _throwIfFailed(Map<String, dynamic> result, String step) {
+    final success = result['success'] ?? result['isSuccess'] ?? result['ok'];
+    if (success == false || success == 0) {
+      final reason = result['error'] ??
+          result['message'] ??
+          result['msg'] ??
+          result['status'] ??
+          result;
+      throw Exception('$reason');
+    }
+
+    final error = result['error'] ?? result['errorMessage'];
+    if (error != null && error.toString().isNotEmpty) {
+      throw Exception(error.toString());
+    }
+
+    final status = result['status']?.toString().toLowerCase();
+    if (status != null && (status.contains('fail') || status.contains('error'))) {
+      throw Exception(result['message'] ?? result);
     }
   }
 
